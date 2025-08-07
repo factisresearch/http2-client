@@ -783,14 +783,6 @@ dispatchHPACKFramesStep (fh, fp) (DispatchHPACK{..}) =
     sid :: StreamId
     sid = HTTP2.streamId fh
 
-#if MIN_VERSION_http2(5,2,0)
-    compat :: [Header] -> HeaderList
-    compat = fmap $ first CI.original
-#else
-    compat :: HeaderList -> HeaderList
-    compat = id
-#endif
-
     go :: FrameHeader -> HPACKLoopDecision -> Either ErrorCode ByteString -> HPACKStepResult
     go curFh decision (Right buffer) =
         if not $ HTTP2.testEndHeader (HTTP2.flags curFh)
@@ -814,9 +806,9 @@ dispatchHPACKFramesStep (fh, fp) (DispatchHPACK{..}) =
                     )
             else case decision of
                 ForwardHeader sId ->
-                    FinishedWithHeaders curFh sId $ fmap compat $ decodeHeader _dispatchHPACKDynamicTable buffer
+                    FinishedWithHeaders curFh sId $ decodeHeader _dispatchHPACKDynamicTable buffer
                 OpenPushPromise parentSid newSid ->
-                    FinishedWithPushPromise curFh parentSid newSid $ fmap compat $ decodeHeader _dispatchHPACKDynamicTable buffer
+                    FinishedWithPushPromise curFh parentSid newSid $ decodeHeader _dispatchHPACKDynamicTable buffer
     go curFh _ (Left err) =
         FailedHeaders curFh sid err
 
