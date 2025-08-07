@@ -268,7 +268,7 @@ data StreamThread = CST
 -- | Record holding functions one can call while in an HTTP2 client stream.
 data Http2Stream = Http2Stream
     { _headers ::
-        HeaderList ->
+        [Header] ->
         (FrameFlags -> FrameFlags) ->
         ClientIO StreamThread
     -- ^ Starts the stream with HTTP headers. Flags modifier can use
@@ -286,14 +286,14 @@ data Http2Stream = Http2Stream
     -- and hence does not respect the RFC if sending large blocks. Use 'sendData'
     -- to chunk and send naively according to server\'s preferences. This function
     -- can be useful if you intend to handle the framing yourself.
-    , _handlePushPromise :: StreamId -> HeaderList -> PushPromiseHandler -> ClientIO ()
+    , _handlePushPromise :: StreamId -> [Header] -> PushPromiseHandler -> ClientIO ()
     }
 
 {- | Sends HTTP trailers.
 
 Trailers should be the last thing sent over a stream.
 -}
-trailers :: Http2Stream -> HeaderList -> (FrameFlags -> FrameFlags) -> ClientIO ()
+trailers :: Http2Stream -> [Header] -> (FrameFlags -> FrameFlags) -> ClientIO ()
 trailers stream hdrs flagmod = void $ _headers stream hdrs flagmod
 
 {- | Handler upon receiving a PUSH_PROMISE from the server.
@@ -307,7 +307,7 @@ client-initiated stream. Longer term we may move passing this handler to the
 '_startStream' instead of 'newHttp2Client' (as it is for now).
 -}
 type PushPromiseHandler =
-    StreamId -> Http2Stream -> HeaderList -> IncomingFlowControl -> OutgoingFlowControl -> ClientIO ()
+    StreamId -> Http2Stream -> [Header] -> IncomingFlowControl -> OutgoingFlowControl -> ClientIO ()
 
 {- | Starts a new stream (i.e., one HTTP request + server-pushes).
 
@@ -347,7 +347,7 @@ Note that we currently enforce the 'HTTP2.setEndHeader' but this design
 choice may change in the future. Hence, we recommend you use
 'HTTP2.setEndHeader' as well.
 -}
-headers :: Http2Stream -> HeaderList -> FlagSetter -> ClientIO StreamThread
+headers :: Http2Stream -> [Header] -> FlagSetter -> ClientIO StreamThread
 headers = _headers
 
 {- | Starts a new Http2Client around a frame connection.
@@ -695,7 +695,11 @@ dispatchControlFramesStep windowUpdatesChan controlFrame@(fh, payload) control@(
                     maybe
                         (return ())
                         (_applySettings _dispatchControlHpackEncoder)
+#if MIN_VERSION_http2(5,2,0)
                         (lookup SettingsTokenHeaderTableSize settsList)
+#else
+                        (lookup SettingsHeaderTableSize settsList)
+#endif
                 _dispatchControlAckSettings
             | otherwise -> do
                 handler <- lookupAndReleaseSetSettingsHandler control
@@ -756,8 +760,8 @@ data HPACKLoopDecision
 data HPACKStepResult
     = WaitContinuation !((FrameHeader, Either FrameDecodeError FramePayload) -> ClientIO HPACKStepResult)
     | FailedHeaders !FrameHeader !StreamId ErrorCode
-    | FinishedWithHeaders !FrameHeader !StreamId (IO HeaderList)
-    | FinishedWithPushPromise !FrameHeader !StreamId !StreamId (IO HeaderList)
+    | FinishedWithHeaders !FrameHeader !StreamId (IO [Header])
+    | FinishedWithPushPromise !FrameHeader !StreamId !StreamId (IO [Header])
 
 dispatchHPACKFramesStep ::
     (FrameHeader, FramePayload) ->
@@ -897,7 +901,7 @@ newOutgoingFlowControl control frames getBase = do
 sendHeaders ::
     Http2FrameClientStream ->
     HpackEncoderContext ->
-    HeaderList ->
+    [Header] ->
     PayloadSplitter ->
     (FrameFlags -> FrameFlags) ->
     ClientIO StreamThread
@@ -1048,7 +1052,11 @@ compat_updateSettings :: Settings -> SettingsList -> Settings
 #if MIN_VERSION_http2(5,0,0)
 compat_updateSettings settings kvs = foldl' update settings kvs
   where
-    update def (SettingsTokenHeaderTableSize,x) = def { headerTableSize = x }
+#if MIN_VERSION_http2(5,2,0)
+    update def (SettingsTokenHeaderTableSize,x)      = def { headerTableSize = x }
+#else
+    update def (SettingsHeaderTableSize,x)      = def { headerTableSize = x }
+#endif
     -- fixme: x should be 0 or 1
     update def (SettingsEnablePush,x)           = def { enablePush = x > 0 }
     update def (SettingsMaxConcurrentStreams,x) = def { maxConcurrentStreams = Just x }
